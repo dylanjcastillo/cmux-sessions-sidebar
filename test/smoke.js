@@ -21,7 +21,7 @@ let ops = 0;
 let ctx;
 
 function push() {
-  const ws = state.workspaces.map((w) => ({ ...w, selected: w.id === state.selectedId }));
+  const ws = state.workspaces.map((w, index) => ({ ...w, index, selected: w.id === state.selectedId }));
   ctx.__setData("workspaces", JSON.stringify(ws));
   ctx.__setData("groups", JSON.stringify(state.groups.map((g) => ({
     id: g.id, name: g.name, collapsed: g.collapsed, pinned: false, anchorId: g.anchor,
@@ -45,12 +45,28 @@ function host(m, p) {
       if (p.child_workspace_ids) throw new Error("child_workspace_ids must be an array");
       const anchor = "GEN" + nextId++;
       const gid = "G" + nextId++;
-      state.workspaces.push({ id: anchor, title: "Terminal", tabs: [], group: gid });
+      state.workspaces.unshift({ id: anchor, title: p.name, tabs: [], group: gid });
       state.groups.push({ id: gid, name: p.name, collapsed: false, anchor });
       state.selectedId = anchor; // cmux focuses the new anchor
       break;
     }
-    case "workspace.group.add": ws(p.workspace_id).group = p.group_id; break;
+    case "workspace.group.add": {
+      const w = ws(p.workspace_id);
+      state.workspaces = state.workspaces.filter((x) => x !== w);
+      w.group = p.group_id;
+      let last = -1;
+      state.workspaces.forEach((x, i) => { if (x.group === p.group_id) last = i; });
+      state.workspaces.splice(last + 1, 0, w);
+      break;
+    }
+    case "workspace.action": {
+      const w = ws(p.workspace_id);
+      if (p.action === "set_description") w.description = p.description;
+      else if (p.action === "rename") w.title = p.title;
+      else if (p.action === "clear_name") w.title = w.id.toLowerCase();
+      else throw new Error("unknown workspace.action " + p.action);
+      break;
+    }
     case "workspace.group.remove": {
       const w = ws(p.workspace_id); const g = state.groups.find((x) => x.id === w.group);
       if (g && g.anchor === w.id) dropGroup(g.id); else delete w.group; // anchor removal dissolves
@@ -108,24 +124,29 @@ const entryIds = () => run("entries().map(e => e.kind + ':' + (e.wsId || e.group
 const summary = (label) => {
   console.log("\n## " + label);
   console.log("groups:", JSON.stringify(state.groups));
-  console.log("workspaces:", state.workspaces.map((w) => w.id + (w.group ? "@" + w.group : "")).join(" "), "| selected:", state.selectedId);
+  console.log("workspaces:", state.workspaces.map((w) => w.id + (w.group ? "@" + w.group : "") + (w.description ? "[hdr]" : "")).join(" "), "| selected:", state.selectedId);
   console.log("entries:", entryIds());
+  console.log("shortcuts:", JSON.stringify(run("shortcutById()")));
 };
 
 summary("initial");
-run("createGroupWith('Work', wsById('W1'))"); settle();
-summary("after New Group 'Work' from W1 (placeholder should be closed, W1 anchor, W1 reselected)");
-run("moveToGroup(wsById('W2'), groupById(userGroups()[0].id))"); settle();
-summary("after moving W2 into Work");
-run("removeFromGroup(wsById('W1'))"); settle();
-summary("after removing anchor W1 (W2 should stay in Work)");
+run("createGroupWith('Work', wsById('W2'))"); settle();
+summary("New Group 'Work' from W2: header hidden + marked, W2 keeps a shortcut, W1 reselected");
+run("moveToGroup(wsById('W3'), groupById(userGroups()[0].id))"); settle();
+summary("moved W3 into Work");
+run("removeFromGroup(wsById('W2'))"); settle();
+summary("removed W2 from Work (W3 stays)");
 run("toggleGroupCollapsed(groupById(userGroups()[0].id))"); settle();
-summary("after collapsing Work (W2 hidden)");
+summary("collapsed Work: W3 hidden and loses its shortcut (cmux skips collapsed members)");
+run("toggleGroupCollapsed(groupById(userGroups()[0].id))"); settle();
 run("finishGroupRename(userGroups()[0].id, 'Clients')"); settle();
-summary("after rename to Clients");
-run("archive(wsById('W3'))"); settle();
-summary("after archiving W3 (Archive group created, W3 hidden from main list)");
-run("unarchive(wsById('W3'))"); settle();
-summary("after unarchiving W3");
+run("finishProjectRename(wsById('W1'), 'Main project')"); settle();
+summary("renamed group to Clients and W1 to 'Main project'");
+run("archive(wsById('W1'))"); settle();
+summary("archived W1: Archive group collapsed, W1 has no shortcut and is hidden");
+run("unarchive(wsById('W1'))"); settle();
+summary("unarchived W1");
+run("ungroupGroup(userGroups().find(g => g.name === 'Clients').id)"); settle();
+summary("ungrouped Clients: its hidden header closed, W3 back at top level");
 console.log("\nactions:\n  " + actions.join("\n  "));
 console.log("\nops applied:", ops);

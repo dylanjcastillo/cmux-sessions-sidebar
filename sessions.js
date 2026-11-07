@@ -22,6 +22,7 @@ const [filter, setFilter] = signal("all"); // all | active | unread
 const [archiveOpen, setArchiveOpen] = signal(false);
 const [renamingTab, setRenamingTab] = signal(null); // tab id with an open rename field
 const [renamingGroup, setRenamingGroup] = signal(null); // group id with an open rename field
+const [renamingProject, setRenamingProject] = signal(null); // workspace id with an open rename field
 const [newGroupFor, setNewGroupFor] = signal(null); // project id with an open "new group" field
 
 // Per-project collapse (session-local; defaults to expanded).
@@ -103,7 +104,7 @@ function tabState(w, t) {
 
 const STATE_ICON = {
   working: "circle.dotted",
-  waiting: "bubble.left.fill",
+  waiting: "circle.fill", // filled dot: needs your input / unread output
   inactive: "moon.zzz",
   shell: "terminal",
 };
@@ -196,22 +197,50 @@ function newSession(w) {
 // --- groups -------------------------------------------------------------------
 // Divider groups (and the Archive) are native cmux workspace groups, so they
 // persist across restarts. Every cmux group is owned by an "anchor" workspace
-// that is also a member.
+// that is also a member, and cmux treats the anchor as the group's *header*:
+// the anchor never gets a Cmd+1..9 number. So each group keeps a placeholder
+// anchor workspace that this sidebar hides (marked by GROUP_HEADER_MARK in its
+// description), and real projects are plain members that keep their numbers.
 //
-// Creating one takes three steps, because the sidebar bridge sends every
-// param as a string and workspace.group.create only accepts an *array* of
-// child ids: (1) create an empty group, for which cmux generates a
-// placeholder anchor workspace; (2) add the project; (3) close the
-// placeholder, which promotes the project to anchor. The watcher below runs
-// steps 2-3 once the data shows the new group.
+// Creating a group: the sidebar bridge sends every param as a string and
+// workspace.group.create only accepts an *array* of child ids, so we
+// (1) create an empty group, for which cmux generates the placeholder anchor,
+// then (2) mark the placeholder and add the project. The watcher below runs
+// step 2 once the data shows the new group.
 //
 // Removing a group's anchor dissolves the whole group, so removeFromGroup
-// hands the anchor to another member first.
+// hands the anchor to another member first (only matters for groups made
+// outside this sidebar, where a real project is the anchor).
+const GROUP_HEADER_MARK = "cmux-sessions-sidebar:group-header";
+const isGroupHeader = (w) => !!(w && w.description === GROUP_HEADER_MARK && w.group &&
+  groupById(w.group)?.anchorId === w.id);
+const realMembers = (groupId) => allWorkspaces().filter((w) => w.group === groupId && !isGroupHeader(w));
+
 const userGroups = () => {
   const gs = (data.groups() ?? []).filter((g) => g.name !== ARCHIVE_GROUP);
   return [...gs.filter((g) => g.pinned), ...gs.filter((g) => !g.pinned)];
 };
 const groupById = (id) => (id ? (data.groups() ?? []).find((g) => g.id === id) : undefined);
+
+// Workspaces in cmux's own order (the order Cmd+1..9 follows).
+const cmuxOrder = () => [...allWorkspaces()].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+
+// Cmd+1..9 as cmux assigns them: rows in cmux order, skipping group anchors
+// and members of collapsed groups; Cmd+9 is always the last row.
+const shortcutById = computed(() => {
+  const ids = [];
+  for (const w of cmuxOrder()) {
+    const g = groupById(w.group);
+    if (g && (g.anchorId === w.id || g.collapsed)) continue;
+    ids.push(w.id);
+  }
+  const map = {};
+  ids.forEach((id, i) => {
+    if (i < 8) map[id] = i + 1;
+    else if (i === ids.length - 1) map[id] = 9;
+  });
+  return map;
+});
 
 const GROUP_CREATE_TIMEOUT_SECONDS = 15;
 let pendingGroup = null; // { name, wsId, knownGroupIds, knownWsIds, selectedId, at, stage, groupId?, anchorId? }
@@ -250,20 +279,22 @@ computed(() => {
     const g = groups.find((x) => !p.knownGroupIds.has(x.id) && x.name === p.name);
     if (!g) return;
     p.groupId = g.id;
-    p.anchorId = g.anchorId;
     p.stage = "add";
+    // Only ever mark the placeholder cmux just generated: it must be a
+    // workspace that didn't exist before we started.
+    if (g.anchorId && g.anchorId !== p.wsId && !p.knownWsIds.has(g.anchorId)) {
+      cmux("workspace.action", { action: "set_description", workspace_id: g.anchorId, description: GROUP_HEADER_MARK });
+    }
     cmux("workspace.group.add", { group_id: g.id, workspace_id: p.wsId });
+    // Archived projects live in a collapsed group so they don't take Cmd+N.
+    if (g.name === ARCHIVE_GROUP && !g.collapsed) cmux("workspace.group.collapse", { group_id: g.id });
     return;
   }
   if (p.stage === "add") {
     const w = wss.find((x) => x.id === p.wsId);
     if (!w || w.group !== p.groupId) return;
     pendingGroup = null;
-    // Only ever close the placeholder cmux just generated: it must be a
-    // workspace that didn't exist before we started.
-    if (p.anchorId && p.anchorId !== p.wsId && !p.knownWsIds.has(p.anchorId)) {
-      cmux("workspace.close", { workspace_id: p.anchorId, force: true });
-    }
+    // cmux focuses the new group's anchor; go back to where the user was.
     if (p.selectedId) cmux("workspace.select", { workspace_id: p.selectedId });
   }
 });
@@ -289,6 +320,28 @@ function moveToGroup(w, g) {
   cmux("workspace.group.add", { group_id: g.id, workspace_id: w.id });
 }
 
+// Dissolve a group: its projects move back to the top level and its hidden
+// placeholder header is closed. (The bridge can't send the boolean
+// remove_generated_anchor, so the placeholder is closed explicitly.)
+function ungroupGroup(groupId) {
+  const g = groupById(groupId);
+  if (!g) return;
+  const header = allWorkspaces().find((w) => w.id === g.anchorId && isGroupHeader(w));
+  cmux("workspace.group.ungroup", { group_id: g.id });
+  if (header) cmux("workspace.close", { workspace_id: header.id, force: true });
+}
+
+function finishProjectRename(w, text) {
+  setRenamingProject(null);
+  if (!w) return;
+  const name = String(text ?? "").trim();
+  if (name.length === 0) {
+    cmux("workspace.action", { action: "clear_name", workspace_id: w.id });
+  } else if (name !== projectTitle(w)) {
+    cmux("workspace.action", { action: "rename", workspace_id: w.id, title: name });
+  }
+}
+
 function toggleGroupCollapsed(g) {
   if (!g) return;
   cmux(g.collapsed ? "workspace.group.expand" : "workspace.group.collapse", { group_id: g.id });
@@ -304,8 +357,12 @@ function finishGroupRename(groupId, text) {
 function archive(w) {
   if (!w) return;
   const g = archiveGroup();
-  if (g) moveToGroup(w, g);
-  else createGroupWith(ARCHIVE_GROUP, w);
+  if (g) {
+    moveToGroup(w, g);
+    if (!g.collapsed) cmux("workspace.group.collapse", { group_id: g.id });
+  } else {
+    createGroupWith(ARCHIVE_GROUP, w);
+  }
 }
 
 function unarchive(w) {
@@ -354,8 +411,6 @@ const entries = computed(() => {
   const f = filter();
   const narrowing = q.length > 0 || f !== "all";
   const ws = allWorkspaces();
-  const live = ws.filter((w) => !isArchived(w) && !isPendingPlaceholder(w));
-  const pinnedFirst = (arr) => [...arr.filter((w) => w.pinned), ...arr.filter((w) => !w.pinned)];
   const groups = userGroups();
   const out = [];
 
@@ -369,7 +424,13 @@ const entries = computed(() => {
     const shown = tabs.filter((t) =>
       passesFilter(w, t) && (q.length === 0 || projectHit || tabHaystack(w, t).includes(q)));
     if (narrowing && shown.length === 0 && !(projectHit && f === "all")) return;
-    list.push({ kind: "project", id: "p:" + w.id + ":" + (w.group ?? "") + ":" + groupsSig, wsId: w.id });
+    const editing = renamingProject() === w.id;
+    list.push({
+      kind: "project",
+      id: "p:" + w.id + ":" + (w.group ?? "") + ":" + groupsSig + (editing ? ":edit" : ""),
+      wsId: w.id,
+      editing,
+    });
     if (newGroupFor() === w.id) list.push({ kind: "newGroup", id: "ng:" + w.id, wsId: w.id });
     if (narrowing || !isCollapsed(w.id)) {
       for (const t of shown) {
@@ -382,13 +443,42 @@ const entries = computed(() => {
     }
   }
 
-  // Ungrouped projects first, with no divider.
-  for (const w of pinnedFirst(live.filter((w) => !groupById(w.group)))) pushProject(w, out);
+  // Rows follow cmux's own workspace order, so the ⌘1-9 hints read top to
+  // bottom (cmux numbers rows in that order). A group's members form one run
+  // under its divider; an ungrouped run that follows a group gets a plain
+  // hairline so it doesn't read as part of the group above.
+  const runs = []; // { groupId: string|null, projects: [] }
+  for (const w of cmuxOrder()) {
+    if (isArchived(w) || isPendingPlaceholder(w)) continue;
+    const g = groupById(w.group);
+    const groupId = g && g.name !== ARCHIVE_GROUP ? g.id : null;
+    let run = runs[runs.length - 1];
+    if (!run || run.groupId !== groupId) {
+      // cmux keeps a group's members contiguous; if a stale order splits
+      // them, fold the stragglers into the group's first run.
+      run = (groupId && runs.find((r) => r.groupId === groupId)) || null;
+      if (!run) {
+        run = { groupId, projects: [] };
+        runs.push(run);
+      }
+    }
+    if (!isGroupHeader(w)) run.projects.push(w);
+  }
 
-  // Then one divider section per group.
-  for (const g of groups) {
+  let afterGroup = false;
+  for (let i = 0; i < runs.length; i++) {
+    const run = runs[i];
     const section = [];
-    for (const w of pinnedFirst(live.filter((w) => w.group === g.id))) pushProject(w, section);
+    for (const w of run.projects) pushProject(w, section);
+    if (!run.groupId) {
+      if (section.length === 0) continue;
+      if (afterGroup) out.push({ kind: "groupEnd", id: "ge:" + i });
+      out.push(...section);
+      afterGroup = false;
+      continue;
+    }
+    afterGroup = true;
+    const g = groupById(run.groupId);
     const nameHit = q.length > 0 && lower(g.name).includes(q);
     if (narrowing && section.length === 0 && !nameHit) continue;
     const editing = renamingGroup() === g.id;
@@ -398,7 +488,7 @@ const entries = computed(() => {
 
   if (narrowing && out.length === 0) out.push({ kind: "empty", id: "empty" });
 
-  const archived = ws.filter((w) => isArchived(w));
+  const archived = ws.filter((w) => isArchived(w) && !isGroupHeader(w));
   const archivedShown = q.length > 0
     ? archived.filter((w) => projectHaystack(w).includes(q))
     : archived;
@@ -500,6 +590,7 @@ function header() {
 function projectMenu(w) {
   return [
     Button("Open Project", () => selectProject(w())),
+    Button("Rename Project…", () => setRenamingProject(w()?.id ?? null)),
     Button("New Session", () => newSession(w())),
     Button(() => (isCollapsed(w()?.id) ? "Expand" : "Collapse"), () => toggleCollapsed(w().id)),
     Divider(),
@@ -533,9 +624,22 @@ function projectTitle(w) {
   return t;
 }
 
-function projectRow(wsId) {
+function projectRow(wsId, editing) {
   const w = () => wsById(wsId);
   const active = () => !!w()?.selected;
+  // Rename: Enter saves, Esc cancels, an empty name restores the automatic
+  // (folder-based) name.
+  const titleView = editing
+    ? TextField(projectTitle(w()), {
+        placeholder: "Project name (empty = automatic)",
+        onSubmit: (text) => finishProjectRename(w(), text),
+        onCancel: () => setRenamingProject(null),
+      }).font(12)
+    : Text(() => projectTitle(w()))
+      .font(12)
+      .weight(() => (active() ? "bold" : "medium"))
+      .lineLimit(1).truncation("tail")
+      .color(() => (active() ? "primary" : "secondary"));
   // One HStack, no overlay: the trailing cluster reserves its own width, so
   // the title truncates before it instead of running underneath it.
   // The gap above each project sits on an outer wrapper so the hover
@@ -550,19 +654,16 @@ function projectRow(wsId) {
     Image(() => (w()?.pinned ? "pin.fill" : active() ? "folder.fill" : "folder"))
       .font(11)
       .color(() => w()?.color ?? (active() ? "#4C8DFF" : "tertiary")),
-    Text(() => projectTitle(w()))
-      .font(12)
-      .weight(() => (active() ? "bold" : "medium"))
-      .lineLimit(1).truncation("tail")
-      .color(() => (active() ? "primary" : "secondary")),
+    titleView,
     Spacer({ minLength: 4 }),
     ZStack({ alignment: "trailing" }, [
-      // ⌘N shortcut hint (cmux's ⌘1–9 follows its own workspace order).
+      // ⌘N shortcut hint, numbered exactly as cmux assigns ⌘1–9.
       // Yields to the unread badge, and to the action buttons on hover.
       Text(() => {
         const ww = w();
-        if (!ww || ww.unread > 0 || typeof ww.index !== "number" || ww.index > 8) return "";
-        return "⌘" + (ww.index + 1);
+        const n = ww ? shortcutById()[ww.id] : undefined;
+        if (!ww || ww.unread > 0 || !n) return "";
+        return "⌘" + n;
       })
         .font(9).monospaced().color("tertiary")
         .opacity(0.45)
@@ -602,7 +703,9 @@ function projectRow(wsId) {
     .hoverBackground(() => (active() ? "#4C8DFF2a" : "#7f7f7f1c"))
     .frame({ maxWidth: "infinity" })
     .cursor("pointer")
-    .onTap(() => toggleCollapsed(wsId))
+    .onTap(() => {
+      if (!editing) toggleCollapsed(wsId);
+    })
     .onDoubleTap(() => selectProject(w()))
     .contextMenu(projectMenu(w))])
     .paddingTop(5)
@@ -671,7 +774,7 @@ function tabRow(wsId, tabId, hasSubtitle, editing) {
     : [titleLine];
   return HStack({ spacing: 8, alignment: "top" }, [
     Image(() => STATE_ICON[st()] ?? "terminal")
-      .font(10)
+      .font(() => (st() === "waiting" ? 7 : 10))
       .weight(() => (st() === "working" ? "semibold" : "regular"))
       .color(() => STATE_COLOR[st()] ?? "tertiary")
       .frame({ width: 14, height: 17 }),
@@ -695,7 +798,7 @@ function tabRow(wsId, tabId, hasSubtitle, editing) {
 // Click folds the group (persisted by cmux); right-click to rename/ungroup.
 function groupRow(groupId, editing) {
   const g = () => groupById(groupId);
-  const count = () => allWorkspaces().filter((w) => w.group === groupId).length;
+  const count = () => realMembers(groupId).length;
   const label = editing
     ? TextField(g()?.name ?? "", {
         placeholder: "Group name",
@@ -728,11 +831,19 @@ function groupRow(groupId, editing) {
       Button("Rename Group…", () => setRenamingGroup(groupId)),
       Button(() => (g()?.collapsed ? "Expand" : "Collapse"), () => toggleGroupCollapsed(g())),
       Divider(),
-      // Dissolves the divider only; its projects move back to the top.
-      Button("Ungroup", () => cmux("workspace.group.ungroup", { group_id: groupId })),
+      // Dissolves the divider only; its projects stay open, ungrouped.
+      Button("Ungroup", () => ungroupGroup(groupId)),
     ])])
     .paddingTop(10)
     .frame({ maxWidth: "infinity" });
+}
+
+// Plain hairline closing a group when ungrouped projects follow it.
+function groupEndRow() {
+  return Rectangle().fill("#7f7f7f30").frame({ height: 1, maxWidth: "infinity" })
+    .paddingHorizontal(4)
+    .paddingTop(10)
+    .paddingBottom(2);
 }
 
 // Inline name field shown under a project after "Move to Group > New Group…".
@@ -758,7 +869,7 @@ function newGroupRow(wsId) {
 }
 
 function archiveHeader() {
-  const count = () => allWorkspaces().filter((w) => isArchived(w)).length;
+  const count = () => allWorkspaces().filter((w) => isArchived(w) && !isGroupHeader(w)).length;
   return HStack({ spacing: 6 }, [
     Image("chevron.right")
       .font(9).weight("semibold").color("tertiary")
@@ -825,7 +936,8 @@ sidebar(() =>
       { items: entries, key: (e) => e.id },
       (e) => {
         const entry = e(); // kind and ids are stable per key
-        if (entry.kind === "project") return projectRow(entry.wsId);
+        if (entry.kind === "project") return projectRow(entry.wsId, entry.editing);
+        if (entry.kind === "groupEnd") return groupEndRow();
         if (entry.kind === "tab") return tabRow(entry.wsId, entry.tabId, entry.sub, entry.editing);
         if (entry.kind === "group") return groupRow(entry.groupId, entry.editing);
         if (entry.kind === "newGroup") return newGroupRow(entry.wsId);

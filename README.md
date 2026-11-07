@@ -2,9 +2,10 @@
 
 A custom sidebar for [cmux](https://cmux.com) that lists projects (workspaces) and their sessions (tabs), styled like the Codex / Claude desktop session lists.
 
-- **Projects** are collapsible. The open project has a filled blue folder, a bold title and a tint. Hover a project for **+** (new session), **archive**, and **✕** (close).
-- **Sessions** show the agent's state (working, waiting for you, idle, plain shell) and how long ago they were last active. Titles wrap to at most two lines.
-- **Groups** are divider sections for projects. To add a project to one, right-click it and choose **Move to Group**, then pick a group or **New Group…**. Click a divider to fold it. Right-click a divider to rename the group or ungroup it (ungrouping keeps the projects).
+- **Projects** are collapsible. The open project has a filled blue folder, a bold title and a tint. Hover a project for **+** (new session), **archive**, and **✕** (close). Each project shows its ⌘1–9 shortcut, numbered exactly as cmux assigns it.
+- **Rename a project**: right-click it and choose **Rename Project…**. An empty name restores the automatic name.
+- **Sessions** show the agent's state: a blue dotted circle while working, an orange dot when it needs your input or has output you haven't seen, a moon when idle, and a terminal icon for a plain shell. They also show how long ago they were last active. Titles wrap to at most two lines.
+- **Groups** are divider sections for projects. To add a project to one, right-click it and choose **Move to Group**, then pick a group or **New Group…**. Click a divider to fold it. Right-click a divider to rename the group or ungroup it (ungrouping keeps the projects). The sidebar lists projects in cmux's own order, so the ⌘ hints count down the list. New groups appear at the top.
 - **Archive** hides a project in a collapsed "Archived" section. Restore it from there.
 - **Search and filters**: the search box and the All / Active / Unread chips filter across projects, groups and tab titles.
 - **Rename a tab**: right-click it and choose **Rename…**. Enter saves, Esc cancels, and an empty name restores the automatic title.
@@ -30,11 +31,10 @@ With the symlink install, edits to `sessions.js` in this repo go live. cmux hot-
 
 These are cmux limitations that shaped the code. The comments in `sessions.js` have the details.
 
-- **Every `cmux()` param becomes a string** in the sidebar bridge. `workspace.group.create` only accepts an array of child workspaces, so the sidebar creates a group in three steps:
-  1. Create an empty group. cmux generates a placeholder "anchor" workspace for it.
-  2. Add the project to the group.
-  3. Close the placeholder. cmux then makes the project the group's anchor.
-- **Removing a group's anchor dissolves the group.** To remove just the anchor project, the sidebar first makes another member the anchor.
+- **Each group keeps a hidden header workspace.** cmux treats a group's "anchor" workspace as the group's header, and the anchor never gets a ⌘1–9 shortcut. So each group keeps the placeholder anchor that cmux generates, and real projects are ordinary members that keep their shortcuts. The sidebar marks the placeholder with the description `cmux-sessions-sidebar:group-header` and hides it. **Ungroup** closes the placeholder.
+- **Every `cmux()` param becomes a string** in the sidebar bridge. `workspace.group.create` only accepts an array of child workspaces, so the sidebar creates an empty group first, then marks its placeholder and adds the project.
+- **Removing a group's anchor dissolves the group.** If a real project is the anchor (a group made outside this sidebar), the sidebar first makes another member the anchor.
+- **Archive is a collapsed group**, because cmux doesn't give ⌘ shortcuts to members of collapsed groups. Archived projects therefore don't take up a number.
 - **Closing a project needs `force`**: cmux refuses to close a workspace with a running process, and a sidebar can't show a confirmation dialog. So the ✕ button takes two clicks: the first turns it red, and a second click within 4 seconds closes the project. The project's right-click **Close Project** closes it in one step.
 - **No tooltips** in the JS renderer, so long titles wrap instead.
 
