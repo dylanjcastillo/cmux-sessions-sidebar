@@ -4,8 +4,8 @@ A custom sidebar for [cmux](https://cmux.com) that lists projects (workspaces) a
 
 - **Projects** are collapsible. The open project has a filled blue folder, a bold title and a tint. Hover a project for **+** (new session), **archive**, and **✕** (close). Each project shows its ⌘1–9 shortcut, numbered exactly as cmux assigns it.
 - **Rename a project**: right-click it and choose **Rename Project…**. An empty name restores the automatic name.
-- **Sessions** show the agent's state: a blue dotted circle while working, an orange dot when it needs your input or has output you haven't seen, a moon when idle, and a terminal icon for a plain shell. They also show how long ago they were last active. Titles wrap to at most two lines.
-- **Groups** are divider sections for projects. To add a project to one, right-click it and choose **Move to Group**, then pick a group or **New Group…**. Click a divider to fold it. Right-click a divider to rename the group or ungroup it (ungrouping keeps the projects). The sidebar lists projects in cmux's own order, so the ⌘ hints count down the list. New groups appear at the top.
+- **Sessions** show the agent's state: a blue dotted circle while working, a blue dot when it needs your input or has output you haven't seen, a moon when idle, and a terminal icon for a plain shell. They also show how long ago they were last active. Titles wrap to at most two lines.
+- **Groups** are divider sections for projects. To add a project to one, right-click it and choose **Move to Group**, then pick a group or **New Group…**. Click a divider to fold it. Right-click a divider to rename the group or ungroup it (ungrouping keeps the projects). Ungrouped projects come first and groups below them. The sidebar also moves projects in cmux's own order to match, so the ⌘ hints count down the list.
 - **Archive** hides a project in a collapsed "Archived" section. Restore it from there.
 - **Search and filters**: the search box and the All / Active / Unread chips filter across projects, groups and tab titles.
 - **Rename a tab**: right-click it and choose **Rename…**. Enter saves, Esc cancels, and an empty name restores the automatic title.

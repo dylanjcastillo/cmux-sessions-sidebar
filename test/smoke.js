@@ -88,6 +88,12 @@ function host(m, p) {
       break;
     }
     case "workspace.select": state.selectedId = p.workspace_id; break;
+    case "workspace.reorder": {
+      const w = ws(p.workspace_id);
+      state.workspaces = state.workspaces.filter((x) => x !== w);
+      state.workspaces.splice(Number(p.index), 0, w);
+      break;
+    }
     default: break;
   }
 }

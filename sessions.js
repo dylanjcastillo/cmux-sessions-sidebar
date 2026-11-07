@@ -111,7 +111,7 @@ const STATE_ICON = {
 
 const STATE_COLOR = {
   working: "#4C8DFF",
-  waiting: "#F5A623",
+  waiting: "#4C8DFF",
   inactive: "tertiary",
   shell: "tertiary",
 };
@@ -299,6 +299,46 @@ computed(() => {
   }
 });
 
+// Order sync: keep ungrouped workspaces ahead of grouped ones in cmux's own
+// order (cmux puts new groups at the top), so cmux's ⌘1-9 numbering matches
+// the sidebar's ungrouped-first layout. One reorder per data update: move the
+// first ungrouped workspace that sits after a grouped one up to just below
+// the ungrouped block. Gives up after ORDER_SYNC_MAX_MOVES moves without
+// converging, so it can never loop against cmux's own ordering rules.
+const ORDER_SYNC_MAX_MOVES = 30;
+let orderSync = { moves: 0, last: null }; // last = { id, index, at }
+computed(() => {
+  const order = cmuxOrder();
+  const now = nowSeconds();
+  if (pendingGroup) return; // let group creation settle first
+  let ungroupedSeen = 0;
+  let groupedSeen = false;
+  let misplaced = null;
+  for (const w of order) {
+    const grouped = !!groupById(w.group);
+    if (grouped) {
+      groupedSeen = true;
+      continue;
+    }
+    if (groupedSeen) {
+      misplaced = { id: w.id, index: ungroupedSeen };
+      break;
+    }
+    ungroupedSeen++;
+  }
+  if (!misplaced) {
+    orderSync = { moves: 0, last: null };
+    return;
+  }
+  if (orderSync.moves >= ORDER_SYNC_MAX_MOVES) return;
+  const last = orderSync.last;
+  // Same request still in flight: wait for cmux's data to catch up.
+  if (last && last.id === misplaced.id && last.index === misplaced.index && now - last.at < 2) return;
+  orderSync.moves++;
+  orderSync.last = { ...misplaced, at: now };
+  cmux("workspace.reorder", { workspace_id: misplaced.id, index: misplaced.index });
+});
+
 function removeFromGroup(w) {
   if (!w || !w.group) return;
   const g = groupById(w.group);
@@ -443,41 +483,31 @@ const entries = computed(() => {
     }
   }
 
-  // Rows follow cmux's own workspace order, so the ⌘1-9 hints read top to
-  // bottom (cmux numbers rows in that order). A group's members form one run
-  // under its divider; an ungrouped run that follows a group gets a plain
-  // hairline so it doesn't read as part of the group above.
-  const runs = []; // { groupId: string|null, projects: [] }
+  // Ungrouped projects first, then one divider section per group, each in
+  // cmux's own order. orderSync (below) moves ungrouped workspaces ahead of
+  // grouped ones in cmux too, so the ⌘1-9 hints still read top to bottom.
+  const ungrouped = [];
+  const runs = []; // { groupId, projects: [] } in order of first appearance
   for (const w of cmuxOrder()) {
     if (isArchived(w) || isPendingPlaceholder(w)) continue;
     const g = groupById(w.group);
-    const groupId = g && g.name !== ARCHIVE_GROUP ? g.id : null;
-    let run = runs[runs.length - 1];
-    if (!run || run.groupId !== groupId) {
-      // cmux keeps a group's members contiguous; if a stale order splits
-      // them, fold the stragglers into the group's first run.
-      run = (groupId && runs.find((r) => r.groupId === groupId)) || null;
-      if (!run) {
-        run = { groupId, projects: [] };
-        runs.push(run);
-      }
+    if (!g || g.name === ARCHIVE_GROUP) {
+      ungrouped.push(w);
+      continue;
+    }
+    let run = runs.find((r) => r.groupId === g.id);
+    if (!run) {
+      run = { groupId: g.id, projects: [] };
+      runs.push(run);
     }
     if (!isGroupHeader(w)) run.projects.push(w);
   }
 
-  let afterGroup = false;
-  for (let i = 0; i < runs.length; i++) {
-    const run = runs[i];
+  for (const w of ungrouped) pushProject(w, out);
+
+  for (const run of runs) {
     const section = [];
     for (const w of run.projects) pushProject(w, section);
-    if (!run.groupId) {
-      if (section.length === 0) continue;
-      if (afterGroup) out.push({ kind: "groupEnd", id: "ge:" + i });
-      out.push(...section);
-      afterGroup = false;
-      continue;
-    }
-    afterGroup = true;
     const g = groupById(run.groupId);
     const nameHit = q.length > 0 && lower(g.name).includes(q);
     if (narrowing && section.length === 0 && !nameHit) continue;
@@ -794,11 +824,10 @@ function tabRow(wsId, tabId, hasSubtitle, editing) {
     .contextMenu(tabMenu(w, t));
 }
 
-// Group divider: chevron + NAME + count + a hairline filling the row.
+// Group divider: chevron + NAME + a hairline filling the row.
 // Click folds the group (persisted by cmux); right-click to rename/ungroup.
 function groupRow(groupId, editing) {
   const g = () => groupById(groupId);
-  const count = () => realMembers(groupId).length;
   const label = editing
     ? TextField(g()?.name ?? "", {
         placeholder: "Group name",
@@ -814,7 +843,6 @@ function groupRow(groupId, editing) {
       .rotation(() => (g()?.collapsed && query().length === 0 ? 0 : 90))
       .frame({ width: 12, height: 14 }),
     label,
-    Text(() => String(count())).font(10).monospaced().color("tertiary").fixedSize(),
     Rectangle().fill("#7f7f7f40").frame({ height: 1, maxWidth: "infinity" }),
   ])
     .paddingLeading(4)
@@ -838,13 +866,6 @@ function groupRow(groupId, editing) {
     .frame({ maxWidth: "infinity" });
 }
 
-// Plain hairline closing a group when ungrouped projects follow it.
-function groupEndRow() {
-  return Rectangle().fill("#7f7f7f30").frame({ height: 1, maxWidth: "infinity" })
-    .paddingHorizontal(4)
-    .paddingTop(10)
-    .paddingBottom(2);
-}
 
 // Inline name field shown under a project after "Move to Group > New Group…".
 function newGroupRow(wsId) {
@@ -937,7 +958,6 @@ sidebar(() =>
       (e) => {
         const entry = e(); // kind and ids are stable per key
         if (entry.kind === "project") return projectRow(entry.wsId, entry.editing);
-        if (entry.kind === "groupEnd") return groupEndRow();
         if (entry.kind === "tab") return tabRow(entry.wsId, entry.tabId, entry.sub, entry.editing);
         if (entry.kind === "group") return groupRow(entry.groupId, entry.editing);
         if (entry.kind === "newGroup") return newGroupRow(entry.wsId);
