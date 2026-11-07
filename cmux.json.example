@@ -1,0 +1,32 @@
+// Optional cmux settings that pair well with the Sessions sidebar.
+// Merge the parts you want into ~/.config/cmux/cmux.json, then run:
+//   cmux config validate && cmux reload-config
+{
+  "$schema": "https://raw.githubusercontent.com/manaflow-ai/cmux/main/web/data/cmux.schema.json",
+  "schemaVersion": 1,
+
+  "app" : {
+    // Hide the workspace title bar above the tabs (the sidebar shows the
+    // open project instead).
+    "minimalMode" : true,
+    // The command palette also matches tab names, not just workspace names.
+    "commandPaletteSearchesAllSurfaces" : true
+  },
+
+  "shortcuts" : {
+    "bindings" : {
+      // Cmd+K opens the fuzzy workspace/session switcher (default is Cmd+P).
+      "goToWorkspace" : "cmd+k"
+    }
+  },
+
+  // Open links in the system default browser instead of the cmux browser.
+  "browser" : {
+    "interceptTerminalOpenCommandInCmuxBrowser" : false,
+    "openTerminalLinksInCmuxBrowser" : false
+  },
+  "sidebar" : {
+    "openPortLinksInCmuxBrowser" : false,
+    "openPullRequestLinksInCmuxBrowser" : false
+  }
+}
