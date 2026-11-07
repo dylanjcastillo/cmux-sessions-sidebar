@@ -154,5 +154,45 @@ run("unarchive(wsById('W1'))"); settle();
 summary("unarchived W1");
 run("ungroupGroup(userGroups().find(g => g.name === 'Clients').id)"); settle();
 summary("ungrouped Clients: its hidden header closed, W3 back at top level");
+
+// --- drag and drop ------------------------------------------------------------
+// Simulates a Reorderable block drop: the grabbed row's block (project + its
+// tabs) is removed and re-inserted before `beforeEntryPrefix` (or at the end),
+// and onMove gets the grabbed row's flat index in that new order.
+function drop(wsId, beforeEntryPrefix, grabKind = "project") {
+  const all = JSON.parse(run("JSON.stringify(entries())"));
+  const block = all.filter((e) => e.wsId === wsId && ["project", "tab", "newGroup"].includes(e.kind));
+  const rest = all.filter((e) => !block.includes(e));
+  let at = beforeEntryPrefix ? rest.findIndex((e) => e.id.startsWith(beforeEntryPrefix)) : rest.length;
+  if (at < 0) throw new Error("no entry " + beforeEntryPrefix);
+  const newOrder = [...rest.slice(0, at), ...block, ...rest.slice(at)];
+  const grabbed = block.find((e) => e.kind === grabKind) || block[0];
+  const index = newOrder.indexOf(grabbed);
+  run(`handleMove(${JSON.stringify(grabbed.id)}, ${index}, { block: true, side: "above" })`);
+  console.log("  (during drop) entries:", entryIds());
+  settle(8);
+}
+const check = (label) => {
+  summary(label);
+  // ⌘ hints must read top to bottom.
+  const sc = JSON.parse(run("JSON.stringify(shortcutById())"));
+  const shown = JSON.parse(run("JSON.stringify(entries().filter(e => e.kind === 'project').map(e => e.wsId))"));
+  const nums = shown.map((id) => sc[id]).filter(Boolean);
+  const sorted = [...nums].sort((a, b) => a - b);
+  if (JSON.stringify(nums) !== JSON.stringify(sorted)) throw new Error("shortcut order mismatch: " + nums);
+};
+
+run("createGroupWith('Work', wsById('W2'))"); settle();
+check("drag setup: group Work holds W2");
+drop("W1", "p:W2");
+check("dragged W1 into Work, above W2");
+drop("W3", "g:");
+check("dropped W3 where it already was (no change)");
+drop("W2", "p:W3");
+check("dragged W2 out of Work, above W3 (ungrouped)");
+drop("W3", null);
+check("dragged W3 to the very end: joins Work, after W1");
+drop("W1", "p:W2", "tab");
+check("grabbed W1 by its tab and dropped it above W2: leaves Work, W1 first");
 console.log("\nactions:\n  " + actions.join("\n  "));
 console.log("\nops applied:", ops);

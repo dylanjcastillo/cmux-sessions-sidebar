@@ -5,7 +5,8 @@ A custom sidebar for [cmux](https://cmux.com) that lists projects (workspaces) a
 - **Projects** are collapsible. The open project has a filled blue folder, a bold title and a tint. Hover a project for **+** (new session), **archive**, and **✕** (close). Each project shows its ⌘1–9 shortcut, numbered exactly as cmux assigns it.
 - **Rename a project**: right-click it and choose **Rename Project…**. An empty name restores the automatic name.
 - **Sessions** show the agent's state: a blue dotted circle while working, a blue dot when it needs your input or has output you haven't seen, a moon when idle, and a terminal icon for a plain shell. They also show how long ago they were last active. Titles wrap to at most two lines.
-- **Groups** are divider sections for projects. To add a project to one, right-click it and choose **Move to Group**, then pick a group or **New Group…**. Click a divider to fold it. Right-click a divider to rename the group or ungroup it (ungrouping keeps the projects). Ungrouped projects come first and groups below them. The sidebar also moves projects in cmux's own order to match, so the ⌘ hints count down the list.
+- **Drag and drop**: drag a project by its row (or by one of its tabs) to reorder it or move it into a group. Drop it under a group's divider to join that group, among the top projects to leave a group, or in the Archived section to archive it. Its tabs move with it. Dragging is off while you search or filter, or while a name field is open.
+- **Groups** are divider sections for projects. To add a project to one, drag it under the group's divider, or right-click it and choose **Move to Group**, then pick a group or **New Group…**. Click a divider to fold it. Right-click a divider to rename the group or ungroup it (ungrouping keeps the projects). Ungrouped projects come first and groups below them. The sidebar also moves projects in cmux's own order to match, so the ⌘ hints count down the list.
 - **Archive** hides a project in a collapsed "Archived" section. Restore it from there.
 - **Search and filters**: the search box and the All / Active / Unread chips filter across projects, groups and tab titles.
 - **Rename a tab**: right-click it and choose **Rename…**. Enter saves, Esc cancels, and an empty name restores the automatic title.
@@ -37,6 +38,7 @@ These are cmux limitations that shaped the code. The comments in `sessions.js` h
 - **Archive is a collapsed group**, because cmux doesn't give ⌘ shortcuts to members of collapsed groups. Archived projects therefore don't take up a number.
 - **Closing a project needs `force`**: cmux refuses to close a workspace with a running process, and a sidebar can't show a confirmation dialog. So the ✕ button takes two clicks: the first turns it red, and a second click within 4 seconds closes the project. The project's right-click **Close Project** closes it in one step.
 - **No tooltips** in the JS renderer, so long titles wrap instead.
+- **Drag and drop** uses one flat `Reorderable`. Each project row and its tab rows share a `block` and are all `fixed`, so grabbing any of them drags the whole project, and it can't land inside another project. On a drop, the sidebar changes the project's group immediately. It moves the project to its new position with `workspace.reorder` once cmux reports the new membership, and shows the project at the drop position in the meantime. (`workspace.reorder_many` would do it in one call, but it needs an array, and the sidebar bridge only sends strings.)
 
 ## Smoke test
 

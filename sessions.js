@@ -23,6 +23,13 @@ const [archiveOpen, setArchiveOpen] = signal(false);
 const [renamingTab, setRenamingTab] = signal(null); // tab id with an open rename field
 const [renamingGroup, setRenamingGroup] = signal(null); // group id with an open rename field
 const [renamingProject, setRenamingProject] = signal(null); // workspace id with an open rename field
+
+// Drag and drop: a dropped project waiting for cmux to apply its new group and
+// position ({ wsId, container, nextRef, at, tries, sentAt }). While set, the
+// list shows the project at its drop position so it doesn't snap back.
+let pendingPlace = null;
+const [placeTick, setPlaceTick] = signal(0);
+const isNarrowing = () => query().trim().length > 0 || filter() !== "all";
 const [newGroupFor, setNewGroupFor] = signal(null); // project id with an open "new group" field
 
 // Per-project collapse (session-local; defaults to expanded).
@@ -331,6 +338,7 @@ computed(() => {
     return;
   }
   if (orderSync.moves >= ORDER_SYNC_MAX_MOVES) return;
+  if (pendingPlace) return; // a drop is being applied; it keeps the invariant
   const last = orderSync.last;
   // Same request still in flight: wait for cmux's data to catch up.
   if (last && last.id === misplaced.id && last.index === misplaced.index && now - last.at < 2) return;
@@ -438,6 +446,156 @@ function closeButtonTap(w) {
   setCloseTick(closeTick() + 1);
 }
 
+// --- drag and drop --------------------------------------------------------------
+// The list is one Reorderable. Each project row plus its tab rows share a
+// `block`, and every row is `fixed`: grabbing a project (or one of its tabs)
+// drags the whole project, it can't land inside another project, and group
+// dividers / the Archived section can't be grabbed. On drop, cmux reports the
+// grabbed row's flat index in the new order; we turn that into
+//   container: the section the project landed in (nearest divider above it:
+//              a group, the Archived section, or none = ungrouped), and
+//   nextRef:   the workspace it now sits before in cmux's order (the next
+//              project, or a group's hidden header for "above that group"),
+// change its group right away, then place it with workspace.reorder once
+// cmux reports the new membership (watcher below).
+const PLACE_TIMEOUT_SECONDS = 8;
+const PLACE_MAX_TRIES = 3;
+
+const sectionOf = (w) => (w && groupById(w.group) && !isArchived(w) ? w.group : null);
+
+// A project's drag block id, or null (not draggable) while searching or
+// filtering (hidden rows would make drop positions ambiguous) or while any
+// inline name field is open.
+const dragBlockFor = (wsId) => () =>
+  isNarrowing() || renamingProject() || renamingTab() || renamingGroup() || newGroupFor()
+    ? null
+    : "b:" + wsId;
+
+// Where `p.wsId` belongs in a cmux order (ids) that doesn't contain it.
+function placementIndex(idsWithout, p) {
+  if (p.nextRef) {
+    const i = idsWithout.indexOf(p.nextRef);
+    if (i >= 0) return i;
+  }
+  // No next reference: right after the last workspace of the target section
+  // (a group's members include its hidden header; "no group" = ungrouped).
+  let last = -1;
+  idsWithout.forEach((id, i) => {
+    const x = wsById(id);
+    if (!x) return;
+    const inSection = p.container ? x.group === p.container : !groupById(x.group);
+    if (inSection) last = i;
+  });
+  return last + 1;
+}
+
+// Display order: cmux's order, with a just-dropped project already at its
+// drop position until cmux catches up.
+function viewOrder() {
+  placeTick();
+  const order = cmuxOrder();
+  const p = pendingPlace;
+  if (!p) return order;
+  const moving = order.find((w) => w.id === p.wsId);
+  if (!moving) return order;
+  const without = order.filter((w) => w.id !== p.wsId);
+  const at = placementIndex(without.map((w) => w.id), p);
+  return [...without.slice(0, at), moving, ...without.slice(at)];
+}
+
+// A just-dropped project shows in its new section before cmux confirms it.
+function displayGroupOf(w) {
+  placeTick();
+  if (pendingPlace && w && pendingPlace.wsId === w.id) return pendingPlace.container;
+  return w?.group;
+}
+
+function handleMove(id, index, extra) {
+  const all = entries();
+  const grabbed = all.find((e) => e.id === id);
+  if (!grabbed || !grabbed.wsId || grabbed.kind === "arch") return;
+  const w = wsById(grabbed.wsId);
+  if (!w) return;
+  const inBlock = (e) => e.wsId === w.id && (e.kind === "project" || e.kind === "tab" || e.kind === "newGroup");
+  const block = all.filter(inBlock);
+  const rest = all.filter((e) => !inBlock(e));
+  // `index` is the grabbed row's slot; the block's head sits `offset` above it.
+  const offset = Math.max(0, block.findIndex((e) => e.id === id));
+  const slot = Math.max(0, Math.min(rest.length, index - offset));
+
+  // Section: the nearest divider above the slot.
+  let container = null;
+  let toArchive = false;
+  for (let i = slot - 1; i >= 0; i--) {
+    const e = rest[i];
+    if (e.kind === "group") {
+      container = e.groupId;
+      break;
+    }
+    if (e.kind === "archHeader" || e.kind === "arch") {
+      toArchive = true;
+      break;
+    }
+  }
+  // Dropped straight onto the boundary above a divider while asking to nest
+  // with what's below: join that group.
+  if (extra && extra.side === "below" && rest[slot] && rest[slot].kind === "group") {
+    container = rest[slot].groupId;
+    toArchive = false;
+  }
+  if (toArchive) {
+    archive(w);
+    return;
+  }
+
+  // Position: before the next project below the slot, or before the next
+  // group's hidden header ("end of this section").
+  let nextRef = null;
+  for (let i = slot; i < rest.length; i++) {
+    const e = rest[i];
+    if (e.kind === "project") {
+      nextRef = e.wsId;
+      break;
+    }
+    if (e.kind === "group") {
+      nextRef = groupById(e.groupId)?.anchorId ?? null;
+      break;
+    }
+    if (e.kind === "archHeader" || e.kind === "arch") break;
+  }
+
+  if (sectionOf(w) !== container) {
+    if (container) moveToGroup(w, groupById(container));
+    else removeFromGroup(w);
+  }
+  pendingPlace = { wsId: w.id, container, nextRef, at: nowSeconds(), tries: 0, sentAt: 0 };
+  setPlaceTick(placeTick() + 1);
+}
+
+// Applies a drop's position once cmux reports the new group membership.
+computed(() => {
+  const order = cmuxOrder();
+  const now = nowSeconds();
+  const p = pendingPlace;
+  if (!p) return;
+  const done = () => {
+    pendingPlace = null;
+    setPlaceTick(placeTick() + 1);
+  };
+  if (now - p.at > PLACE_TIMEOUT_SECONDS) return done();
+  const w = order.find((x) => x.id === p.wsId);
+  if (!w) return done();
+  if (sectionOf(w) !== p.container) return; // membership change still in flight
+  const ids = order.map((x) => x.id);
+  const target = placementIndex(ids.filter((x) => x !== p.wsId), p);
+  if (ids.indexOf(p.wsId) === target) return done();
+  if (p.sentAt && now - p.sentAt < 2) return; // reorder still in flight
+  if (p.tries >= PLACE_MAX_TRIES) return done();
+  p.tries++;
+  p.sentAt = now || 1;
+  cmux("workspace.reorder", { workspace_id: p.wsId, index: target });
+});
+
 function firstMatch() {
   const e = entries().find((x) => x.kind === "tab");
   if (!e) return;
@@ -488,9 +646,9 @@ const entries = computed(() => {
   // grouped ones in cmux too, so the ⌘1-9 hints still read top to bottom.
   const ungrouped = [];
   const runs = []; // { groupId, projects: [] } in order of first appearance
-  for (const w of cmuxOrder()) {
+  for (const w of viewOrder()) {
     if (isArchived(w) || isPendingPlaceholder(w)) continue;
-    const g = groupById(w.group);
+    const g = groupById(displayGroupOf(w));
     if (!g || g.name === ARCHIVE_GROUP) {
       ungrouped.push(w);
       continue;
@@ -739,7 +897,10 @@ function projectRow(wsId, editing) {
     .onDoubleTap(() => selectProject(w()))
     .contextMenu(projectMenu(w))])
     .paddingTop(5)
-    .frame({ maxWidth: "infinity" });
+    .frame({ maxWidth: "infinity" })
+    // Drag handle for the project + its tabs (see "drag and drop").
+    .fixed()
+    .block(dragBlockFor(wsId));
 }
 
 // Rename: Enter saves, Esc cancels, an empty name restores the automatic title.
@@ -821,7 +982,10 @@ function tabRow(wsId, tabId, hasSubtitle, editing) {
     .onTap(() => {
       if (!editing) openSession(w(), t());
     })
-    .contextMenu(tabMenu(w, t));
+    .contextMenu(tabMenu(w, t))
+    // Part of its project's drag block: tabs move with the project.
+    .fixed()
+    .block(dragBlockFor(wsId));
 }
 
 // Group divider: chevron + NAME + a hairline filling the row.
@@ -863,7 +1027,8 @@ function groupRow(groupId, editing) {
       Button("Ungroup", () => ungroupGroup(groupId)),
     ])])
     .paddingTop(10)
-    .frame({ maxWidth: "infinity" });
+    .frame({ maxWidth: "infinity" })
+    .fixed(); // a drop target boundary, not draggable
 }
 
 
@@ -886,7 +1051,8 @@ function newGroupRow(wsId) {
     .marginLeading(14)
     .cornerRadius(8)
     .background("#7f7f7f1f")
-    .frame({ maxWidth: "infinity" });
+    .frame({ maxWidth: "infinity" })
+    .fixed();
 }
 
 function archiveHeader() {
@@ -907,7 +1073,8 @@ function archiveHeader() {
     .hoverBackground("#7f7f7f12")
     .frame({ maxWidth: "infinity" })
     .cursor("pointer")
-    .onTap(() => setArchiveOpen(!archiveOpen()));
+    .onTap(() => setArchiveOpen(!archiveOpen()))
+    .fixed();
 }
 
 function archivedRow(wsId) {
@@ -939,22 +1106,25 @@ function archivedRow(wsId) {
       Button("Restore", () => unarchive(w())),
       Divider(),
       Button("Close Project", () => forceCloseProject(w())).destructive(),
-    ]);
+    ])
+    .fixed();
 }
 
 function emptyRow() {
   return Text(() => (query().length > 0 ? "No sessions match “" + query() + "”" : "Nothing here"))
     .font(12).color("tertiary")
     .padding(10)
-    .frame({ maxWidth: "infinity" });
+    .frame({ maxWidth: "infinity" })
+    .fixed();
 }
 
 // --- root ---------------------------------------------------------------------------------
 sidebar(() =>
   VStack({ spacing: 2 }, [
     header(),
-    ForEach(
-      { items: entries, key: (e) => e.id },
+    // One flat drag surface (see "drag and drop").
+    Reorderable(
+      { items: entries, key: (e) => e.id, spacing: 2, onMove: handleMove },
       (e) => {
         const entry = e(); // kind and ids are stable per key
         if (entry.kind === "project") return projectRow(entry.wsId, entry.editing);
