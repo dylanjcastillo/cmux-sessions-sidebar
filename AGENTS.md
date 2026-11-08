@@ -5,8 +5,7 @@ This repo is a custom sidebar for [cmux](https://cmux.com) that lists projects (
 ## Where to look
 
 - The sidebar: `sessions.js`. It runs in cmux's sidebar runtime, not in a browser or in Node. The runtime is `SidebarRuntime.js` inside the cmux app bundle (the path is in `README.md`). Read it before using a runtime feature you haven't seen in `sessions.js`.
-- The Cmd+K search: `search/cmux-search`, a Python script that lists projects and tabs in fzf.
-- The installer: `install.sh`. It links or copies `sessions.js` and `search/cmux-search` into `~/.config/cmux`.
+- The installer: `install.sh`. It links or copies `sessions.js` into `~/.config/cmux/sidebars`.
 - Suggested cmux settings: `cmux.json.example`.
 - The smoke test: `test/smoke.js`. It runs `sessions.js` in the real runtime against a fake cmux.
 - Demo data for screenshots: `demo/`. `demo/demo.sh` switches the sidebar to made-up projects, and `demo/demo.sh --off` switches it back.

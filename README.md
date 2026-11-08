@@ -66,7 +66,7 @@ cmux reloads the sidebar when the file changes. To reload it by hand, run `cmux 
 [`cmux.json.example`](cmux.json.example) has settings that work well with this sidebar. Copy the ones you want into `~/.config/cmux/cmux.json`, then run `cmux config validate && cmux reload-config`.
 
 - **Minimal mode.** Hides the bar above the tabs, since the sidebar already shows the open project.
-- **Cmd+K to search projects and tabs.** Opens [`search/cmux-search`](search/cmux-search) in a new tab. It lists your projects and tabs in sidebar order with each project's group, branch and folder, and you narrow them with fzf. Enter jumps to your pick and Esc cancels, and either one closes the tab. `install.sh` puts the script in `~/.config/cmux/bin`, and it needs fzf (`brew install fzf`). cmux's own switcher stays on Cmd+P, and a second setting makes it match tab names as well as project names.
+- **Cmd+K for Go to Workspace.** Opens cmux's switcher for projects and sessions. The default shortcut is Cmd+P. A second setting makes it match session titles as well as project names.
 - **Projects stay in place.** cmux moves a project to the top when it gets a notification. This setting turns that off, so projects stay where you put them.
 - **Links in your own browser.** Opens links in your default browser instead of the cmux browser.
 
