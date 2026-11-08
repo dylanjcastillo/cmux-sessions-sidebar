@@ -198,7 +198,8 @@ function selectProject(w) {
 function newSession(w) {
   if (!w) return;
   cmux("workspace.select", { workspace_id: w.id });
-  cmux("surface.create", { workspace_id: w.id });
+  // cmux leaves a new tab in the background unless asked to focus it.
+  cmux("surface.create", { workspace_id: w.id, focus: true });
 }
 
 // --- groups -------------------------------------------------------------------
