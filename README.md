@@ -67,6 +67,7 @@ cmux reloads the sidebar when the file changes. To reload it by hand, run `cmux 
 
 - **Minimal mode.** Hides the bar above the tabs, since the sidebar already shows the open project.
 - **Cmd+K for Go to Workspace.** Opens cmux's switcher for projects and sessions. The default shortcut is Cmd+P. A second setting makes it match session titles as well as project names.
+- **Projects stay in place.** cmux moves a project to the top when it gets a notification. This setting turns that off, so projects stay where you put them.
 - **Links in your own browser.** Opens links in your default browser instead of the cmux browser.
 
 ## Why the code works the way it does

@@ -10,7 +10,10 @@
     // open project instead).
     "minimalMode" : true,
     // The command palette also matches tab names, not just workspace names.
-    "commandPaletteSearchesAllSurfaces" : true
+    "commandPaletteSearchesAllSurfaces" : true,
+    // Keep projects where they are when they get a notification (cmux moves
+    // them to the top by default).
+    "reorderOnNotification" : false
   },
 
   "shortcuts" : {
