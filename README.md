@@ -2,7 +2,7 @@
 
 A sidebar for [cmux](https://cmux.com) that lists your projects and the agent sessions in each one, like the session list in the Codex and Claude desktop apps. Read this to install it, or before you change the code.
 
-<img src="screenshots/sidebar.png" alt="The Sessions sidebar with projects and their sessions, the Work and Side projects groups, and the Archived section" width="238">
+![A cmux window with the Sessions sidebar on the left, showing projects, their sessions and two groups, and Claude Code on the right after adding a contact form to a project](screenshots/window.png)
 
 ## What it shows
 
@@ -66,54 +66,9 @@ cmux reloads the sidebar when the file changes. To reload it by hand, run `cmux 
 [`cmux.json.example`](cmux.json.example) has settings that work well with this sidebar. Copy the ones you want into `~/.config/cmux/cmux.json`, then run `cmux config validate && cmux reload-config`.
 
 - **Minimal mode.** Hides the bar above the tabs, since the sidebar already shows the open project.
-- **Cmd+K for Go to Workspace.** Opens cmux's switcher for projects and sessions. The default shortcut is Cmd+P. A second setting makes it match session titles as well as project names.
+- **Cmd+K to search projects and tabs.** Opens [`search/cmux-search`](search/cmux-search) in a new tab. It lists your projects and tabs in sidebar order with each project's group, branch and folder, and you narrow them with fzf. Enter jumps to your pick and Esc cancels, and either one closes the tab. `install.sh` puts the script in `~/.config/cmux/bin`, and it needs fzf (`brew install fzf`). cmux's own switcher stays on Cmd+P, and a second setting makes it match tab names as well as project names.
 - **Projects stay in place.** cmux moves a project to the top when it gets a notification. This setting turns that off, so projects stay where you put them.
 - **Links in your own browser.** Opens links in your default browser instead of the cmux browser.
-
-## Why the code works the way it does
-
-cmux limits what a custom sidebar can do. These limits shaped the code, and the comments in `sessions.js` have the details.
-
-- **Every group keeps a hidden header workspace.** cmux treats one workspace in each group, the "anchor", as the group's header, and the anchor never gets a ⌘ shortcut. So the sidebar keeps the placeholder anchor that cmux creates with each group and hides it. Real projects are ordinary members and keep their shortcuts. The sidebar finds the placeholder by its description, `cmux-sessions-sidebar:group-header`. **Ungroup** closes it.
-- **The sidebar creates a group in two steps.** The bridge between the sidebar and cmux turns every `cmux()` param into a string, but `workspace.group.create` only accepts an array of workspaces. So the sidebar creates an empty group, then marks its placeholder and adds the project.
-- **The sidebar moves the anchor before removing a project.** Removing a group's anchor deletes the whole group. A group made outside this sidebar can have a real project as its anchor, so the sidebar first makes another member the anchor.
-- **Archived is a folded group.** cmux doesn't give ⌘ shortcuts to projects in a folded group, so archived projects don't use up a number.
-- **The ✕ button takes two clicks.** cmux won't close a workspace with a running process unless the call passes `force`, and a sidebar can't show a confirmation dialog. The first click turns the button red, and a second click within 4 seconds closes the project. **Close Project** in the right-click menu closes it in one step.
-- **Long titles wrap.** The sidebar can't show tooltips, so it shows up to two lines instead.
-- **Drag and drop uses one flat `Reorderable`.** A project row and its session rows share a `block` and are all `fixed`, so grabbing any of them drags the whole project, and it can't land inside another project. On a drop, the sidebar changes the project's group straight away. It moves the project with `workspace.reorder` once cmux reports the new group, and shows the project where you dropped it until then. `workspace.reorder_many` would do it in one call, but it needs an array.
-
-## Screenshots
-
-The screenshot uses made-up projects, so it shows nothing from your own workspaces. [`demo/demo.sh`](demo/demo.sh) puts [`demo/demo-data.js`](demo/demo-data.js) in front of `sessions.js`, installs the result as a sidebar called `sessions-demo` and switches to it. The demo's buttons do nothing.
-
-To take the screenshot again:
-
-1. Switch the sidebar to the demo.
-
-   ```sh
-   demo/demo.sh
-   ```
-
-2. Open a new cmux window and find its id. The new window has only an empty shell, so none of your terminal output ends up near the sidebar.
-
-   ```sh
-   cmux rpc window.create '{}'
-   cmux list-windows
-   ```
-
-3. Capture the sidebar. The region is in points from the window's top-left corner.
-
-   ```sh
-   cmux shot --window <id> --region 0,0,238,775 --out "$PWD/screenshots/sidebar.png"
-   ```
-
-4. Close the new window, then switch back to your own sidebar. This also removes `sessions-demo`.
-
-   ```sh
-   demo/demo.sh --off
-   ```
-
-Before you commit, open the image and check that it stops at the edge of the sidebar.
 
 ## Smoke test
 
