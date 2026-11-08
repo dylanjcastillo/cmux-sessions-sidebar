@@ -45,4 +45,4 @@ else
   echo "cmux CLI not found on PATH; open cmux and pick \"sessions\" from the sidebar toggle's right-click menu."
 fi
 echo
-echo "Optional settings (minimal mode, Cmd+K switcher, etc.): see cmux.json.example"
+echo "Optional settings (minimal mode, projects that stay in place, etc.): see cmux.json.example"

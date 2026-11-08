@@ -16,13 +16,6 @@
     "reorderOnNotification" : false
   },
 
-  "shortcuts" : {
-    "bindings" : {
-      // Cmd+K opens the fuzzy workspace/session switcher (default is Cmd+P).
-      "goToWorkspace" : "cmd+k"
-    }
-  },
-
   // Open links in the system default browser instead of the cmux browser.
   "browser" : {
     "interceptTerminalOpenCommandInCmuxBrowser" : false,
