@@ -16,10 +16,18 @@
     "reorderOnNotification" : false
   },
 
-  "shortcuts" : {
-    "bindings" : {
-      // Cmd+K opens the fuzzy workspace/session switcher (default is Cmd+P).
-      "goToWorkspace" : "cmd+k"
+  // Cmd+K searches projects and tabs with fzf (search/cmux-search, installed
+  // by install.sh; needs `brew install fzf`). It opens in a new tab, which
+  // closes itself when you pick something or press Esc. cmux's own switcher
+  // stays on Cmd+P.
+  "actions" : {
+    "search-projects-and-tabs" : {
+      "type" : "command",
+      "title" : "Search Projects and Tabs",
+      "command" : "exec ~/.config/cmux/bin/cmux-search",
+      "target" : "newTabInCurrentPane",
+      "shortcut" : "cmd+k",
+      "palette" : true
     }
   },
 

@@ -34,6 +34,23 @@ else
   fi
 fi
 
+# The Cmd+K search (search/cmux-search) goes into ~/.config/cmux/bin, where the
+# action in cmux.json.example runs it from. It's linked or copied like the
+# sidebar.
+search_src="$repo/search/cmux-search"
+search_dest="$HOME/.config/cmux/bin/cmux-search"
+mkdir -p "$(dirname "$search_dest")"
+if [[ -L "$search_dest" && "$(readlink "$search_dest")" == "$search_src" && "$mode" == "link" ]]; then
+  echo "Already linked: $search_dest -> $search_src"
+else
+  if [[ -e "$search_dest" || -L "$search_dest" ]]; then
+    mv "$search_dest" "$search_dest.bak-$(date +%Y%m%d-%H%M%S)"
+  fi
+  if [[ "$mode" == "copy" ]]; then cp "$search_src" "$search_dest"; else ln -s "$search_src" "$search_dest"; fi
+  echo "Installed $search_dest"
+fi
+command -v fzf >/dev/null 2>&1 || echo "The Cmd+K search needs fzf: brew install fzf"
+
 if command -v cmux >/dev/null 2>&1; then
   cmux sidebar validate sessions
   cmux sidebar reload sessions || true
